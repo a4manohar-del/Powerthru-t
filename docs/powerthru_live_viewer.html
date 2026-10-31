@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PowerThru live demo</title>
+<style>
+:root{--bg:#ffffff;--fg:#14181f;--muted:#5b6573;--card:#f4f6f9;--line:#dfe4ea;--accent:#1f6feb;--normal:#1a9850;--fatigue:#c77700;--high:#d73027;--cal:#7c8695;color-scheme:light}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1318;--fg:#e8ecf1;--muted:#9aa5b3;--card:#171d25;--line:#2a323d;--accent:#5aa2ff;--normal:#3fbf7f;--fatigue:#f0a830;--high:#ff6259;--cal:#8a94a3;color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:980px;margin:0 auto;padding:20px 16px 40px}
+h1{font-size:1.6rem;margin:0 0 4px}
+h2{font-size:.85rem;margin:0 0 8px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.sub{color:var(--muted);margin:0 0 12px}
+.note{border:1px solid var(--line);border-left:4px solid var(--fatigue);background:var(--card);padding:8px 12px;border-radius:8px;font-size:.9rem;margin-bottom:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:12px}
+.controls{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:12px}
+button,select{font:inherit;padding:6px 12px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--fg);cursor:pointer}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+label{font-size:.9rem;color:var(--muted);display:flex;gap:6px;align-items:center}
+.top{display:grid;grid-template-columns:minmax(200px,1fr) 2fr;gap:12px}
+.status{text-align:center}
+#badge{display:inline-block;padding:4px 14px;border-radius:999px;color:#fff;font-weight:700;background:var(--cal);text-transform:uppercase;font-size:.85rem}
+#risk{font-size:3.4rem;font-weight:800;line-height:1.1;margin-top:6px}
+.lbl{color:var(--muted);font-size:.8rem}
+#prog{height:6px;border-radius:3px;background:var(--line);margin-top:10px;overflow:hidden}
+#progbar{height:100%;width:0;background:var(--accent)}
+.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;align-items:center}
+.m b{display:block;font-size:1.4rem}
+.m span{color:var(--muted);font-size:.8rem}
+canvas{width:100%;height:150px;display:block}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.foot{color:var(--muted);font-size:.85rem}
+@media (max-width:640px){.top,.grid2{grid-template-columns:1fr}.metrics{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<main>
+<h1>PowerThru live demo</h1>
+<p class="sub">A simulated band streams forearm sEMG to the app; the app learns your baseline, then tracks fatigue and overexertion.</p>
+<div class="note"><b>Simulated data.</b> Everything here is generated in your browser. It is not a medical device, and the risk score is a placeholder rule, not a validated cramp or overexertion detector.</div>
+
+<div class="controls">
+  <button id="play" class="primary">Pause</button>
+  <button id="reset">Restart</button>
+  <label>Speed <select id="speed"><option value="1">1×</option><option value="5" selected>5×</option><option value="20">20×</option></select></label>
+  <label>Effort <select id="mode"><option value="auto" selected>Auto ramp</option><option value="manual">Manual</option></select></label>
+  <label id="manwrap" hidden>Level <input id="manual" type="range" min="0" max="1" step="0.01" value="0.2"></label>
+  <label><input id="loss" type="checkbox" checked> Simulate 1% packet loss</label>
+</div>
+
+<section class="top">
+  <div class="card status">
+    <div id="badge" role="status">calibrating</div>
+    <div id="risk">0</div><div class="lbl">risk score (0–100)</div>
+    <div id="prog"><div id="progbar"></div></div>
+    <div class="lbl" id="clock">0 s simulated</div>
+  </div>
+  <div class="card metrics">
+    <div class="m"><b id="mRms">–</b><span>sEMG RMS</span></div>
+    <div class="m"><b id="mMdf">–</b><span>median freq (Hz)</span></div>
+    <div class="m"><b id="mTemp">–</b><span>skin temp (°C)</span></div>
+    <div class="m"><b id="mSweat">–</b><span>sweat (µS)</span></div>
+  </div>
+</section>
+
+<div class="card"><h2>Raw sEMG, last second (1 kHz)</h2><canvas id="c1"></canvas></div>
+<div class="card"><h2>Risk over time</h2><canvas id="c2"></canvas></div>
+<div class="grid2">
+  <div class="card"><h2>RMS trend</h2><canvas id="c3"></canvas></div>
+  <div class="card"><h2>Median frequency trend (Hz)</h2><canvas id="c4"></canvas></div>
+</div>
+<p class="foot">Auto ramp: 70 s of steady effort, then rising effort. Fatigue shows up as higher RMS and a falling median frequency. In Manual mode, keep the level low for the first 60 s so the baseline is learned at rest. Gaps appear when a simulated packet is lost; the app skips that second instead of guessing.</p>
+</main>
+
+<script>
+// ==CORE==
+const FS=1000, BATCH=50, NFFT=1024, BASE_SECS=60;
+const TONES=[]; for(let f=20;f<=450;f+=7) TONES.push(f);
+
+function makeSynth(){
+  const ph=TONES.map(()=>Math.random()*2*Math.PI);
+  return function(amp,center){
+    const w=TONES.map(f=>Math.exp(-Math.pow((f-center)/(0.6*center),2)));
+    let ss=0; for(const a of w) ss+=a*a/2;
+    const s=amp/Math.sqrt(ss), out=new Float64Array(BATCH);
+    for(let i=0;i<BATCH;i++){
+      let v=0;
+      for(let k=0;k<TONES.length;k++){ v+=w[k]*Math.sin(ph[k]); ph[k]+=2*Math.PI*TONES[k]/FS; }
+      out[i]=v*s+(Math.random()-.5)*amp*0.1;
+    }
+    for(let k=0;k<ph.length;k++) ph[k]%=2*Math.PI;
+    return out;
+  };
+}
+
+function fft(re,im){
+  const n=re.length;
+  for(let i=1,j=0;i<n;i++){
+    let bit=n>>1; for(;j&bit;bit>>=1) j^=bit; j^=bit;
+    if(i<j){let t=re[i];re[i]=re[j];re[j]=t;t=im[i];im[i]=im[j];im[j]=t;}
+  }
+  for(let len=2;len<=n;len<<=1){
+    const ang=-2*Math.PI/len, wr=Math.cos(ang), wi=Math.sin(ang), h=len>>1;
+    for(let i=0;i<n;i+=len){
+      let cr=1,ci=0;
+      for(let j=0;j<h;j++){
+        const a=i+j,b=a+h, vr=re[b]*cr-im[b]*ci, vi=re[b]*ci+im[b]*cr;
+        re[b]=re[a]-vr; im[b]=im[a]-vi; re[a]+=vr; im[a]+=vi;
+        const nr=cr*wr-ci*wi; ci=cr*wi+ci*wr; cr=nr;
+      }
+    }
+  }
+}
+
+function emgFeatures(x){            // 1 s of raw sEMG -> RMS + median frequency (20–450 Hz)
+  const n=x.length, re=new Float64Array(NFFT), im=new Float64Array(NFFT);
+  let m=0; for(let i=0;i<n;i++) m+=x[i]; m/=n;
+  let ss=0;
+  for(let i=0;i<n;i++){ const d=x[i]-m; ss+=d*d; re[i]=d*(0.5-0.5*Math.cos(2*Math.PI*i/(n-1))); }
+  fft(re,im);
+  const lo=Math.ceil(20*NFFT/FS), hi=Math.floor(450*NFFT/FS), p=[]; let tot=0;
+  for(let k=lo;k<=hi;k++){ const v=re[k]*re[k]+im[k]*im[k]; p.push(v); tot+=v; }
+  let c=0, mdf=0;
+  for(let i=0;i<p.length;i++){ c+=p[i]; if(c>=tot/2){ mdf=(lo+i)*FS/NFFT; break; } }
+  return {rms:Math.sqrt(ss/n), mdf};
+}
+
+function makeAnalyzer(baseSecs){    // same idea as powerthru_hub.py: learn baseline, z-score, score the 30 s trend
+  const rows=[], zs=[]; let mean=null, std=null;
+  return function(f){
+    const v=[f.rms,f.mdf,f.temp,f.sweat];
+    if(!mean){
+      rows.push(v);
+      if(rows.length>=baseSecs){
+        mean=[0,1,2,3].map(i=>rows.reduce((a,r)=>a+r[i],0)/rows.length);
+        std=[0,1,2,3].map(i=>{
+          const sd=Math.sqrt(rows.reduce((a,r)=>a+Math.pow(r[i]-mean[i],2),0)/rows.length);
+          return Math.max(sd,0.1*Math.abs(mean[i]),1e-3);
+        });
+      }
+      return {state:'calibrating',risk:0,progress:Math.min(1,rows.length/baseSecs)};
+    }
+    zs.push(v.map((x,i)=>Math.max(-6,Math.min(6,(x-mean[i])/std[i])))); if(zs.length>30) zs.shift();
+    const n=zs.length;
+    if(n<10) return {state:'normal',risk:0,progress:1};
+    const mz=[0,0,0,0], sl=[0,0,0,0], tm=(n-1)/2; let den=0;
+    for(const r of zs) for(let i=0;i<4;i++) mz[i]+=r[i]/n;
+    for(let t=0;t<n;t++){ den+=(t-tm)*(t-tm); for(let i=0;i<4;i++) sl[i]+=(t-tm)*(zs[t][i]-mz[i]); }
+    for(let i=0;i<4;i++) sl[i]=sl[i]/den*n;
+    const score=0.35*mz[0]-0.35*mz[1]+0.15*mz[2]+0.15*mz[3]+0.15*(sl[0]-sl[1]);
+    const risk=Math.round(Math.max(0,Math.min(100,score*30)));
+    return {state:risk<35?'normal':risk<65?'fatigue':'high_risk',risk,progress:1};
+  };
+}
+// ==/CORE==
+
+// ---------- UI ----------
+const $=id=>document.getElementById(id);
+const S={run:true,speed:5,mode:'auto',manual:0.2,loss:true};
+const HIST=240;
+let synth,an,buf,t,bis,gap,eff,tempS,sweatS,hist;
+
+function reset(){
+  synth=makeSynth(); an=makeAnalyzer(BASE_SECS);
+  buf=new Float64Array(FS); t=0; bis=0; gap=false; eff=0; tempS=33; sweatS=2;
+  hist={risk:[],rms:[],mdf:[]}; show({state:'calibrating',risk:0,progress:0});
+}
+function target(){ if(S.mode==='manual') return S.manual; const c=t%240; return c<70?0:(c-70)/170; }
+
+function step(){                                   // one 50 ms packet from the "band"
+  eff+=(target()-eff)*0.02; tempS+=(33+1.2*eff-tempS)*0.003; sweatS+=(2+3*eff-sweatS)*0.004;
+  const b=synth(80+120*eff,105-35*eff);
+  buf.copyWithin(0,BATCH);
+  if(S.loss&&Math.random()<0.01){ gap=true; buf.fill(0,FS-BATCH); } else buf.set(b,FS-BATCH);
+  if(++bis<FS/BATCH) return;
+  bis=0; t++;
+  if(gap){ gap=false; push(null,null,null); show({state:'gap',risk:null}); return; }
+  const f=emgFeatures(buf); f.temp=tempS+(Math.random()-.5)*0.05; f.sweat=sweatS+(Math.random()-.5)*0.1;
+  const r=an(f); push(r.risk,f.rms,f.mdf); show(r,f);
+}
+function push(r,a,m){ for(const [k,v] of [['risk',r],['rms',a],['mdf',m]]){ hist[k].push(v); if(hist[k].length>HIST) hist[k].shift(); } }
+
+const COL={calibrating:'--cal',normal:'--normal',fatigue:'--fatigue',high_risk:'--high',gap:'--cal'};
+function show(r,f){
+  $('badge').textContent=r.state.replace('_',' ');
+  $('badge').style.background=`var(${COL[r.state]})`;
+  $('risk').textContent=r.risk==null?'–':r.risk;
+  $('progbar').style.width=((r.progress??1)*100)+'%';
+  $('clock').textContent=r.state==='calibrating'?`learning your baseline… ${t} s`:`${t} s simulated`;
+  if(f){ $('mRms').textContent=f.rms.toFixed(0); $('mMdf').textContent=f.mdf.toFixed(0);
+         $('mTemp').textContent=f.temp.toFixed(2); $('mSweat').textContent=f.sweat.toFixed(2); }
+}
+
+function css(n){ return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
+function prep(c){ const r=c.getBoundingClientRect(), d=window.devicePixelRatio||1;
+  c.width=Math.round(r.width*d); c.height=Math.round(r.height*d);
+  const g=c.getContext('2d'); g.setTransform(d,0,0,d,0,0); return [g,r.width,r.height]; }
+function plot(c,data,min,max,color,bands){
+  const [g,w,h]=prep(c), L=40, B=14, W=w-L-6, H=h-B-4;
+  const y=v=>4+H-(v-min)/(max-min)*H;
+  g.font='11px system-ui'; g.fillStyle=css('--muted'); g.strokeStyle=css('--line'); g.lineWidth=1;
+  for(const v of [min,(min+max)/2,max]){ g.beginPath(); g.moveTo(L,y(v)); g.lineTo(L+W,y(v)); g.stroke(); g.fillText(Math.round(v),2,y(v)+4); }
+  if(bands) for(const [v,col] of bands){ g.strokeStyle=css(col); g.setLineDash([4,4]); g.beginPath(); g.moveTo(L,y(v)); g.lineTo(L+W,y(v)); g.stroke(); g.setLineDash([]); }
+  g.strokeStyle=color; g.lineWidth=1.6; g.beginPath(); let pen=false;
+  const n=data.length, N=c.dataset.n?+c.dataset.n:n;
+  for(let i=0;i<n;i++){ const v=data[i]; if(v==null||isNaN(v)){ pen=false; continue; }
+    const x=L+i/(N-1)*W, yy=y(Math.max(min,Math.min(max,v))); pen?g.lineTo(x,yy):g.moveTo(x,yy); pen=true; }
+  g.stroke();
+}
+function draw(){
+  const acc=css('--accent');
+  const raw=Array.from(buf); const m=Math.max(150,...raw.map(Math.abs));
+  $('c1').dataset.n=FS; plot($('c1'),raw,-m,m,acc);
+  $('c2').dataset.n=HIST; plot($('c2'),hist.risk,0,100,css('--high'),[[35,'--fatigue'],[65,'--high']]);
+  const rmsMax=Math.max(250,...hist.rms.filter(v=>v!=null));
+  $('c3').dataset.n=HIST; plot($('c3'),hist.rms,0,rmsMax,acc);
+  $('c4').dataset.n=HIST; plot($('c4'),hist.mdf,40,130,acc);
+}
+
+$('play').onclick=()=>{ S.run=!S.run; $('play').textContent=S.run?'Pause':'Play'; };
+$('reset').onclick=reset;
+$('speed').onchange=e=>S.speed=+e.target.value;
+$('mode').onchange=e=>{ S.mode=e.target.value; $('manwrap').hidden=S.mode!=='manual'; };
+$('manual').oninput=e=>S.manual=+e.target.value;
+$('loss').onchange=e=>S.loss=e.target.checked;
+reset();
+setInterval(()=>{ if(!S.run) return; for(let i=0;i<S.speed;i++) step(); draw(); },50);
+window.addEventListener('resize',draw);
+</script>
+</body>
+</html>
