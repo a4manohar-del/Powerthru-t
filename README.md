@@ -75,10 +75,10 @@ falling median frequency are classic signs of muscle fatigue.
 | `software/onboarding_model.py` | Survey + calibration -> personal baseline and category |
 | `software/tinyml_model.py` | Small MLP, int8 TFLite and C-array export (needs TensorFlow) |
 | `software/ble_protocol.py`, `ble_client.py` | Packet format and a recorder that writes labeled feature CSVs |
-| `software/powerthru_common.py` | Shared feature extraction and synthetic data |
+| `software/WESAD_CNNGRU.py` | Uses WESAD data with a CNN + GRU Model |
 | `firmware/band_ble_test.ino` | ArduinoBLE sketch streaming fake data in the same format (untested) |
 | `firmware/firmware_micropython_sketch.py` | MicroPython peripheral sketch (untested) |
-| `docs/index.html` | The browser demo (GitHub Pages) |
+| `docs/powerthru_livd_viewer.html` | The browser demo (GitHub Pages) |
 | `pcb/` | KiCad project (coming) |
 
 ## Real band
