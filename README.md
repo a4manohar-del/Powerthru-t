@@ -5,6 +5,8 @@
 
 > **Built with AI assistance.** Much of the code in this repo was written with Claude (Anthropic). See [AI disclosure](#ai-disclosure).
 
+DISCLAIMER: I've created a lot more for this project but as of now I am unable to access is because it is on my computer (out of town), I will update soon. And I have like 100 different scripts in my folder but I only really put the important final versions here.
+
 PowerThru is a wearable band for the forearm or calf that streams sEMG, motion, skin temperature and
 sweat data to a phone app. The app learns each athlete's baseline, then tracks fatigue and overexertion
 trends, with cramp detection as the flagship feature. The long-term target is coaches and sports programs
