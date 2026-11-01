@@ -1,7 +1,7 @@
 # Powerthru-t
 # PowerThru
 
-**[Live demo (runs in your browser, simulated data)](https://a4manohar-del.github.io/powerthru/)**
+**[Live demo (runs in your browser, simulated data)](https://a4manohar-del.github.io/powerthru-t/)**
 
 > **Built with AI assistance.** Much of the code in this repo was written with Claude (Anthropic). See [AI disclosure](#ai-disclosure).
 
